@@ -113,3 +113,68 @@ describe('DockviewWindowManager closeWindow', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 });
+
+// `activate: false` is what lets a plugin put a window on the page as furniture
+// without taking the keyboard from the code the student is writing. The panels
+// here remember whether they are open, so an open that has to create one and an
+// open that finds one already there are both exercised.
+describe('DockviewWindowManager openWindow', () => {
+  const openPanels = new Set<string>();
+  const setActive = vi.fn();
+  const view = {
+    dispose: vi.fn(),
+    fromJSON: vi.fn(),
+    addPanel: vi.fn(({ id }: { id: string }) => {
+      openPanels.add(id);
+    }),
+    getPanel: vi.fn((id: string) => (openPanels.has(id) ? { api: { setActive, close: vi.fn() } } : undefined))
+  };
+
+  const openManager = async () => {
+    openPanels.clear();
+    mocks.createDockview.mockReset();
+    mocks.createDockview.mockReturnValue(view);
+    const manager = new DockviewWindowManager(
+      {},
+      registryOf(['panel', 'aside'], async () => fakeWindow(vi.fn()))
+    );
+    await manager.attach({} as HTMLDivElement);
+    // Both windows docked during attach; pretend the student closed the aside.
+    openPanels.delete('aside');
+    view.addPanel.mockClear();
+    setActive.mockClear();
+    return manager;
+  };
+
+  it('focuses a window it opens, by default', async () => {
+    const manager = await openManager();
+
+    await manager.openWindow('aside');
+
+    expect(view.addPanel).toHaveBeenCalledWith(expect.objectContaining({ id: 'aside' }));
+    expect(setActive).toHaveBeenCalled();
+  });
+
+  it('places a window without focusing it when asked not to activate', async () => {
+    const manager = await openManager();
+
+    await manager.openWindow('aside', { direction: 'right', referencePanel: 'panel' }, { activate: false });
+
+    expect(view.addPanel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'aside',
+        position: { direction: 'right', referencePanel: 'panel' }
+      })
+    );
+    expect(setActive).not.toHaveBeenCalled();
+  });
+
+  it('leaves the keyboard alone for a window that is already open', async () => {
+    const manager = await openManager();
+
+    await manager.openWindow('panel', undefined, { activate: false });
+
+    expect(view.addPanel).not.toHaveBeenCalled();
+    expect(setActive).not.toHaveBeenCalled();
+  });
+});

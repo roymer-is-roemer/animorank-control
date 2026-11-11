@@ -1,0 +1,9 @@
+{
+  "id": "notepad",
+  "manifestVersion": "0",
+  "name": "Notepad",
+  "author": "AnimoRank",
+  "version": "1.0.0",
+  "description": "Adds a scratch notepad beside the editor. What is typed in it is saved with the session and recorded in its history.",
+  "category": ["solve"]
+}

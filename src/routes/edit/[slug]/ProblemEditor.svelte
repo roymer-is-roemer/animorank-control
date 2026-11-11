@@ -94,19 +94,11 @@
     void ClientPluginLoader.instance().notifyPageHook('onProblemEditorLoad', context);
   });
 
-  // Every superseded layout key, cleared on the way past. A saved layout wins
-  // over the default one, so a browser still holding an old key would keep its
-  // stale arrangement and never see panels that later defaults introduce --
-  // which is why each change to `defaultLayout` comes with a new key, dated the
-  // day it landed. Drop each entry once its date is far enough back that every
-  // browser holding the key has since loaded the page and had it swept.
-  //
-  // `problem-editor:v` covers the whole retired `v<number>` convention in one
-  // prefix, because a dated key never starts with it. The colon separator is
-  // load-bearing: with hyphens the live key would start with `problem-editor-`
-  // and this sweep would delete it on every mount.
-  const SUPERSEDED_LAYOUT_KEYS = ['problem-editor-', 'problem-editor:v'];
-  onMount(() => SUPERSEDED_LAYOUT_KEYS.forEach((key) => discardSavedLayouts(key)));
+  // This copy does not persist layouts: `DockviewWindow` is given no
+  // `storageKey`, so every visit builds `defaultLayout` and nothing is written
+  // back. Whatever earlier builds saved under this family of keys is swept on
+  // the way past, since nothing reads it any more.
+  onMount(() => discardSavedLayouts('problem-editor'));
 
   onDestroy(() => {
     destroyed = true;
@@ -127,7 +119,6 @@
       bind:manager
       {windowRegistry}
       {defaultLayout}
-      storageKey={`problem-editor:2026-09-18:${data.problem.id}`}
     />
   {/if}
 </div>

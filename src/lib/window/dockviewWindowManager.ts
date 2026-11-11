@@ -27,6 +27,17 @@ export interface DockviewWindowManagerOptions {
   defaultLayout?: DefaultLayout;
 }
 
+/** How an open places its window. */
+export interface OpenWindowOptions {
+  /**
+   * Whether the window takes focus. Defaults to true: a window the student
+   * asked for should hand them its keyboard. A plugin that places a window as
+   * page furniture passes `false`, so it appears beside the work without
+   * taking the keyboard away from whatever they were writing.
+   */
+  activate?: boolean;
+}
+
 /**
  * Opens (or focuses) a window in the dockview, optionally placing it. The
  * window type is erased on purpose: a page context hands this to plugins, which
@@ -34,7 +45,8 @@ export interface DockviewWindowManagerOptions {
  */
 export type OpenWindow = (
   _key: string,
-  _positions?: AddPanelPositionOptions | AddPanelPositionOptions[]
+  _positions?: AddPanelPositionOptions | AddPanelPositionOptions[],
+  _options?: OpenWindowOptions
 ) => Promise<unknown>;
 
 /**
@@ -152,16 +164,19 @@ export class DockviewWindowManager<T> {
    * Open the window, focusing it when it is already open. When it needs to be
    * created, `positions` (a single position or a list of candidates) places
    * the panel relative to an existing panel or group; the first candidate
-   * whose reference is open is used.
+   * whose reference is open is used. `options.activate` turns off the focus
+   * for a window that is furniture rather than something the student opened.
    */
   public async openWindow(
     key: string,
-    positions?: AddPanelPositionOptions | AddPanelPositionOptions[]
+    positions?: AddPanelPositionOptions | AddPanelPositionOptions[],
+    options: OpenWindowOptions = {}
   ): Promise<Window<T>> {
     const window = await this.ensureWindow(key);
+    const activate = options.activate ?? true;
     const panel = this.dockview?.getPanel(key);
     if (panel) {
-      panel.api.setActive();
+      if (activate) panel.api.setActive();
     } else {
       const position = this.resolvePosition(positions);
       this.dockview?.addPanel({
@@ -171,7 +186,7 @@ export class DockviewWindowManager<T> {
         ...(position !== undefined ? { position } : {})
       });
       // Positioned additions are not activated by dockview; focus the panel.
-      this.dockview?.getPanel(key)?.api.setActive();
+      if (activate) this.dockview?.getPanel(key)?.api.setActive();
     }
     return window;
   }

@@ -1,0 +1,9 @@
+{
+  "id": "notepad-replay",
+  "manifestVersion": "0",
+  "name": "Notepad Replay",
+  "author": "AnimoRank",
+  "version": "1.0.0",
+  "description": "Replays the student's notepad keystrokes, reconstructing the note across the session.",
+  "category": ["analytics"]
+}

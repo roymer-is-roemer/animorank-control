@@ -12,8 +12,10 @@ import {
   type TestRunResponse
 } from '$lib/practiceSession/api';
 import type { AddPanelPositionOptions } from 'dockview-core';
+import type { OpenWindowOptions } from '$lib/window/dockviewWindowManager';
 import { Subscribable } from '$lib/utils/subscription';
 import type { ExecutionEvent } from '$lib/testCase/executionHook';
+import { NOTEPAD_TEXT_MODIFIED, notepadDelta } from '$lib/telemetry/types/notepadEvent';
 
 /**
  * Shown when an attempt is abandoned because the code could not be persisted.
@@ -29,7 +31,11 @@ const unsavedMessage = (verb: string) =>
 const messageOf = (error: unknown, fallback: string): string => (error instanceof Error ? error.message : fallback);
 
 /** Opens (or focuses) a window in the dockview, optionally placing it. */
-export type OpenWindow = (_key: string, _positions?: AddPanelPositionOptions | AddPanelPositionOptions[]) => void;
+export type OpenWindow = (
+  _key: string,
+  _positions?: AddPanelPositionOptions | AddPanelPositionOptions[],
+  _options?: OpenWindowOptions
+) => Promise<unknown>;
 
 /** Closes a window in the dockview by key; a key that is not open is a no-op. */
 export type CloseWindow = (_key: string) => void;
@@ -109,6 +115,15 @@ export class SolveWindowContext {
   private readonly autosave: AutoSave<Record<string, string>>;
 
   /**
+   * The notepad's text, seeded from the session's extension data. The window
+   * that shows it belongs to the notepad plugin; the text and its save paths
+   * live here because the page's own saves flush them.
+   */
+  public notepad: string = $state('');
+
+  private readonly notepadAutosave: AutoSave<string>;
+
+  /**
    * The telemetry sink for this session, shared by everything that attaches
    * hooks or flushes (the editor window, the save path). One instance per
    * page, so it is bound to this session's id.
@@ -159,6 +174,10 @@ export class SolveWindowContext {
     this.telemetry.attachExecution(this.executionObservable);
 
     this.autosave = new AutoSave((code) => this.saveCode(code), $state.snapshot(this.editorState.codeSections));
+
+    const initialNotepad = initial.practiceSession.notepad;
+    this.notepad = initialNotepad;
+    this.notepadAutosave = new AutoSave((text) => this.saveNotepad(text), initialNotepad);
   }
 
   /** The current autosave state, for the editor status bar. */
@@ -181,6 +200,31 @@ export class SolveWindowContext {
     return this.autosave.forceSave($state.snapshot(this.editorState.codeSections));
   }
 
+  /** The notepad's autosave state, for the plugin's notepad window to report on. */
+  public get notepadSaveState(): AutoSaveState {
+    return this.notepadAutosave.state;
+  }
+
+  /**
+   * Replace the notepad text: record the changed span in the session history and
+   * queue the whole text for the session data. An input event that changes
+   * nothing records and saves nothing.
+   */
+  public updateNotepad(next: string): void {
+    const previous = this.notepad;
+    if (next === previous) return;
+    this.notepad = next;
+    const delta = notepadDelta(previous, next);
+    if (delta) this.telemetry.record({ type: NOTEPAD_TEXT_MODIFIED, data: delta });
+    this.notepadAutosave.save(next);
+  }
+
+  /** Persist the notepad immediately, bypassing the debounce. */
+  public forceSaveNotepad(): Promise<boolean> {
+    // A string is not a reactive proxy, so no snapshot is needed here.
+    return this.notepadAutosave.forceSave(this.notepad);
+  }
+
   public async run(): Promise<void> {
     this.runError = null;
     this.editorState.locked = true;
@@ -189,6 +233,7 @@ export class SolveWindowContext {
         this.runError = unsavedMessage('run');
         return;
       }
+      void this.forceSaveNotepad();
       const results = await runTestCases(this.practiceSession.id, this.problem);
       this.executionObservable.fire('tests', {
         runType: 'run',
@@ -221,6 +266,7 @@ export class SolveWindowContext {
         this.runError = unsavedMessage('submitted');
         return;
       }
+      void this.forceSaveNotepad();
       const results = await submit(this.practiceSession.id, this.problem);
       this.executionObservable.fire('tests', {
         runType: 'submit',
@@ -260,6 +306,7 @@ export class SolveWindowContext {
         this.runError = unsavedMessage('run');
         return;
       }
+      void this.forceSaveNotepad();
       this.customRunResult = await runCustomInput(this.practiceSession.id, stdin);
       this.executionObservable.fire('custom', {
         submittedCode: this.editorState.code,
@@ -288,6 +335,16 @@ export class SolveWindowContext {
     this.practiceSession.recordSavedCode(code);
     // The session state is persisted: flush collated telemetry into the
     // session history alongside it, instead of on its own timer.
+    void this.telemetry.flush();
+  }
+
+  private async saveNotepad(notepad: string): Promise<void> {
+    await savePracticeSession(this.practiceSession.id, { extension_data: { notepad } });
+    // The server holds this text now, so a context rebuilt from the session model
+    // must not reseed from the page-load value.
+    this.practiceSession.recordSavedNotepad(notepad);
+    // Rides the same cadence as the code save: the history entries collated while
+    // typing are written out with the data they describe.
     void this.telemetry.flush();
   }
 }

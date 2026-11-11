@@ -8,6 +8,7 @@ import { TelemetryService } from '$lib/telemetry/telemetryService';
 import type { Entry } from '$lib/telemetry/telemetryHook';
 import type { Problem as ProblemModel, PracticeSession as PracticeSessionModel } from '$lib/zenstack/models';
 import type { User } from '@auth/sveltekit';
+import type { JsonValue } from '@zenstackhq/orm';
 
 vi.mock('$lib/practiceSession/api', async (importOriginal) => ({
   ...(await importOriginal<typeof practiceSessionApi>()),
@@ -29,7 +30,7 @@ const STARTER_CODE = [
 
 const user = { id: 'student-1' } as User;
 
-const makeSession = (savedCode: Record<string, string>) => {
+const makeSession = (savedCode: Record<string, string>, extensionData: JsonValue = {}) => {
   const problem = new Problem({
     id: 'problem-1',
     name: 'Slots problem',
@@ -49,7 +50,8 @@ const makeSession = (savedCode: Record<string, string>) => {
       problem_id: 'problem-1',
       student_id: 'student-1',
       done: false,
-      previous_state: { code: savedCode }
+      previous_state: { code: savedCode },
+      extension_data: extensionData
     } as unknown as PracticeSessionModel,
     problem,
     user
@@ -426,6 +428,96 @@ describe('SolveWindowContext run error lifetime', () => {
     // it outlasts the problem it reported -- a student who reconnects and keeps
     // typing would go on reading that their work could not be saved.
     expect(context.runError).toBeNull();
+  });
+});
+
+// The notepad is a window of its own whose text is tracked twice: as history,
+// so the replay can rebuild the note keystroke by keystroke, and as session
+// extension data, so it survives a reload.
+describe('SolveWindowContext notepad', () => {
+  class RecordingTelemetryService extends TelemetryService {
+    public readonly entries: Entry[] = [];
+    public flushes = 0;
+    protected telemetryCallback(entry: Entry): void {
+      this.entries.push(entry);
+    }
+    public override async flush(): Promise<void> {
+      this.flushes += 1;
+    }
+  }
+
+  const makeNotepadContext = async (extensionData: JsonValue = {}) => {
+    const telemetry = new RecordingTelemetryService('session-1');
+    const { problem, practiceSession } = makeSession({ code: '  puts("hi");' }, extensionData);
+    const context = await SolveWindowContext.create({ problem, practiceSession, language: 'c', telemetry });
+    return { context, telemetry, practiceSession, problem };
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200 }))
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  it('seeds from the notepad the session has persisted', async () => {
+    const { context } = await makeNotepadContext({ notepad: 'seed' });
+
+    expect(context.notepad).toBe('seed');
+  });
+
+  it('reads a session with no persisted notepad as empty', async () => {
+    const { context } = await makeNotepadContext();
+
+    expect(context.notepad).toBe('');
+  });
+
+  it('records the changed span of a notepad edit', async () => {
+    const { context, telemetry } = await makeNotepadContext({ notepad: 'seed' });
+
+    context.updateNotepad('seeded');
+
+    expect(telemetry.entries).toEqual([{ type: 'NOTEPAD_TEXT_MODIFIED', data: { offset: 4, old: '', new: 'ed' } }]);
+  });
+
+  it('records nothing for an input event that changed nothing', async () => {
+    const { context, telemetry } = await makeNotepadContext({ notepad: 'seed' });
+
+    context.updateNotepad('seed');
+
+    expect(telemetry.entries).toEqual([]);
+  });
+
+  it('persists the notepad as session extension data', async () => {
+    const { context, telemetry, practiceSession } = await makeNotepadContext({ notepad: 'seed' });
+    context.updateNotepad('seeded');
+
+    expect(await context.forceSaveNotepad()).toBe(true);
+
+    // The notepad write says nothing about the code, so it cannot touch it.
+    expect(fetch).toHaveBeenCalledWith('/api/practice-session/session-1', {
+      method: 'PUT',
+      body: JSON.stringify({ extension_data: { notepad: 'seeded' } }),
+      headers: { 'content-type': 'application/json' }
+    });
+    expect(practiceSession.extension_data).toEqual({ notepad: 'seeded' });
+    // The history entries recorded while typing ride on the data save.
+    expect(telemetry.flushes).toBe(1);
+  });
+
+  it('lets a context rebuilt from the session start from the saved notepad', async () => {
+    const { context, practiceSession, telemetry, problem } = await makeNotepadContext({ notepad: 'seed' });
+    context.updateNotepad('seeded');
+    await context.forceSaveNotepad();
+
+    const rebuilt = await SolveWindowContext.create({ problem, practiceSession, language: 'c', telemetry });
+
+    expect(rebuilt.notepad).toBe('seeded');
   });
 });
 

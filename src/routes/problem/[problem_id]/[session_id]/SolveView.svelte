@@ -54,6 +54,9 @@
     });
   });
 
+  // Two columns: the problem's reference on the left, the work on the right.
+  // The notepad's column is not here — it belongs to a plugin, which opens it
+  // beside the editor once it has loaded (see `lib/plugins/notepad`).
   const defaultLayout: DefaultLayout = {
     panes: [
       {
@@ -94,20 +97,23 @@
     untrack(() => context?.scheduleSave());
   });
 
-  createHotkey('Control+S', () => void context?.forceSave());
+  createHotkey('Control+S', () => {
+    void context?.forceSave();
+    void context?.forceSaveNotepad();
+  });
 
   let resuming = false;
   beforeNavigate((navigation) => {
     // No context yet means nothing has been edited: nothing to flush, and the
     // navigation is safe to let through.
     if (!context || resuming || navigation.type === 'leave' || !navigation.to) return;
-    if (context.saveState === 'saved') return;
+    if (context.saveState === 'saved' && context.notepadSaveState === 'saved') return;
 
     navigation.cancel();
     const { href } = navigation.to.url;
 
-    void context!.forceSave().then(() => {
-      if (context!.saveState === 'error' && !window.confirm('Your latest changes could not be saved. Leave anyway?')) {
+    void Promise.all([context.forceSave(), context.forceSaveNotepad()]).then(([codeSaved, notepadSaved]) => {
+      if ((!codeSaved || !notepadSaved) && !window.confirm('Your latest changes could not be saved. Leave anyway?')) {
         return;
       }
       resuming = true;
@@ -115,22 +121,19 @@
     });
   });
 
-  // Every superseded layout key, cleared on the way past. A saved layout wins
-  // over the default one, so a browser still holding an old key would keep its
-  // stale arrangement and never see panels that later defaults introduce --
-  // which is why each change to `defaultLayout` comes with a new key, dated the
-  // day it landed. Drop each entry once its date is far enough back that every
-  // browser holding the key has since loaded the page and had it swept.
-  //
-  // `solve-layout-v` covers the whole retired `v<number>` convention in one
-  // prefix -- `solve-layout-v2-<id>` (the only one saved per problem) through
-  // `solve-layout-v5` -- because a dated key never starts with it.
-  const SUPERSEDED_LAYOUT_KEYS = ['solve-layout-v'];
-  onMount(() => SUPERSEDED_LAYOUT_KEYS.forEach((key) => discardSavedLayouts(key)));
+  // This copy does not persist layouts: `DockviewWindow` is given no
+  // `storageKey`, so every visit builds `defaultLayout` and nothing is written
+  // back. Whatever earlier builds saved under this family of keys is swept on
+  // the way past, since nothing reads it any more.
+  onMount(() => discardSavedLayouts('solve-layout'));
 
   onMount(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!context || untrack(() => context!.saveState) !== 'saved') {
+      if (
+        !context ||
+        untrack(() => context!.saveState) !== 'saved' ||
+        untrack(() => context!.notepadSaveState) !== 'saved'
+      ) {
         e.preventDefault();
         return '';
       }
@@ -170,7 +173,6 @@
       bind:context
       {windowRegistry}
       {defaultLayout}
-      storageKey="solve-layout-2026-09-18"
       bind:manager
     />
   {/if}

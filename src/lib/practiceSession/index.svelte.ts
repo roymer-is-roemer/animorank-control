@@ -8,6 +8,9 @@ export type PracticeSessionData = {
   code: Record<string, string>;
 };
 
+/** The `extension_data` key the solve page's notepad is persisted under. */
+const NOTEPAD_EXTENSION_KEY = 'notepad';
+
 export type PreviousCodeSection = {
   slot: Slot;
   code: string;
@@ -125,5 +128,25 @@ export abstract class PracticeSession {
 
   set extension_data(value: JsonValue) {
     this.model.extension_data = value;
+  }
+
+  /** The notepad text this session last saved, or `''` when it has none. */
+  public get notepad(): string {
+    // `extension_data` is any JSON, so anything that is not an object reads as empty.
+    const data = this.extension_data;
+    const value =
+      typeof data === 'object' && data !== null && !Array.isArray(data)
+        ? (data as Record<string, unknown>)[NOTEPAD_EXTENSION_KEY]
+        : undefined;
+    return typeof value === 'string' ? value : '';
+  }
+
+  /** Advance the client copy after the server accepted a notepad write, preserving
+   *  other extension keys locally just as the server's shallow merge does. */
+  public recordSavedNotepad(notepad: string): void {
+    const data = this.extension_data;
+    const stored =
+      typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+    this.model.extension_data = { ...stored, [NOTEPAD_EXTENSION_KEY]: notepad } as JsonValue;
   }
 }

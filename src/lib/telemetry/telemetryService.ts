@@ -64,6 +64,12 @@ export abstract class TelemetryService {
     }
   }
 
+  /** Record one entry into this session's history. The notepad uses this; hooks
+   *  cover the editor and execution paths. */
+  public record(entry: Entry): void {
+    void this.telemetryCallback(entry);
+  }
+
   /**
    * Persist or transmit any entries the service has collated so far (the
    * session history strategy writes them out in one batch). Called by the
