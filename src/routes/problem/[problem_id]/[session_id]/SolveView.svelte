@@ -54,19 +54,28 @@
     });
   });
 
-  // Two columns: the problem's reference on the left, the work on the right.
-  // The notepad's column is not here — it belongs to a plugin, which opens it
-  // beside the editor once it has loaded (see `lib/plugins/notepad`).
+  // The reference column and the work column are laid out 1:2, so that the
+  // notepad's plugin — which splits the work column in half when it opens its
+  // window (dockview gives the new group half of the reference group) — leaves
+  // the three columns sharing the width equally: problem, editor, notepad.
+  //
+  // Top-level `panes` split evenly and take no weights, so the columns live in
+  // one horizontal pane instead; dockview flips the split axis at every depth,
+  // and a pane whose orientation disagrees with its depth is wrapped in a
+  // single-child branch to flip it back (see `defaultLayoutToDockview`).
   const defaultLayout: DefaultLayout = {
     panes: [
       {
-        orientation: 'vertical',
-        children: [{ tabs: ['problem_info', 'submissions'], active: 'problem_info' }]
-      },
-      {
-        orientation: 'vertical',
-        children: ['code_editor', { tabs: ['test_cases', 'custom_code'], active: 'test_cases' }],
-        weights: [2, 1]
+        orientation: 'horizontal',
+        children: [
+          { tabs: ['problem_info', 'submissions'], active: 'problem_info' },
+          {
+            orientation: 'vertical',
+            children: ['code_editor', { tabs: ['test_cases', 'custom_code'], active: 'test_cases' }],
+            weights: [2, 1]
+          }
+        ],
+        weights: [1, 2]
       }
     ]
   };
